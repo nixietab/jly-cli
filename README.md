@@ -7,18 +7,17 @@ A terminal-based Jellyfin music browser and player using `fzf` inspired by ani-c
 - Browse albums and songs from a Jellyfin server.
 - Stream music using `ffmpeg`
 - Support for multiple Jellyfin servers.
-- Search by album
+- Search by album, artist, genere, or song
   
 ## Planned Features
 
-- Search by artist, genere, or song.
 - Some kind of queue system.
 - Lyric support
 
 ## Requirements
 
 - Python 3
-- `fzf` (fuzzy finder)
+- `fzf`
 - `ffmpeg` and `ffplay`
 - `requests`
 
