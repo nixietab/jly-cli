@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# jly-fin, a cli music client for jellyfin
+# Source code is kind of a mess(? Im going to fix a lot of this later
+# - Nixietab
 
 import os
 import sys
@@ -137,7 +140,7 @@ def choose_server_fzf(servers):
 # ----- Jellyfin API and FZF -----
 def jellyfin_auth(base_url, username, password, device='jellyfin-fzf-music'):
     headers = {
-        "X-Emby-Authorization": f'MediaBrowser Client=\"JellyfinFZF\", Device=\"{device}\", DeviceId=\"fzf-{username}\", Version=\"1.0.0\"',
+        "X-Emby-Authorization": f'MediaBrowser Client="JellyfinFZF", Device="{device}", DeviceId="fzf-{username}", Version="1.0.0"',
         "Content-Type": "application/json"
     }
     data = {"Username": username, "Pw": password}
@@ -165,6 +168,21 @@ def get_music_items(base_url, token, user_id, album_id=None):
     r.raise_for_status()
     return r.json()['Items']
 
+def get_all_songs(base_url, token, user_id):
+    headers = {"X-Emby-Token": token}
+    params = {
+        "IncludeItemTypes": "Audio",
+        "Recursive": "true",
+        "Fields": "AlbumArtist,Album,Artist,Artists",
+        "SortBy": "Name,SortName",
+        "SortOrder": "Ascending",
+        "UserId": user_id
+    }
+    url = urljoin(base_url + '/', f"Users/{user_id}/Items")
+    r = requests.get(url, headers=headers, params=params, verify=False)
+    r.raise_for_status()
+    return r.json()['Items']
+
 def get_albums(base_url, token, user_id):
     headers = {"X-Emby-Token": token}
     params = {
@@ -175,6 +193,71 @@ def get_albums(base_url, token, user_id):
         "SortOrder": "Ascending",
         "UserId": user_id
     }
+    url = urljoin(base_url + '/', f"Users/{user_id}/Items")
+    r = requests.get(url, headers=headers, params=params, verify=False)
+    r.raise_for_status()
+    return r.json()['Items']
+
+def get_artists(base_url, token, user_id):
+    headers = {"X-Emby-Token": token}
+    params = {
+        "IncludeItemTypes": "MusicArtist",
+        "Recursive": "true",
+        "SortBy": "SortName",
+        "SortOrder": "Ascending",
+        "UserId": user_id
+    }
+    url = urljoin(base_url + '/', f"Users/{user_id}/Items")
+    r = requests.get(url, headers=headers, params=params, verify=False)
+    r.raise_for_status()
+    return r.json()['Items']
+
+def get_artist_albums(base_url, token, user_id, artist_id):
+    headers = {"X-Emby-Token": token}
+    params = {
+        "IncludeItemTypes": "MusicAlbum",
+        "Recursive": "true",
+        "Fields": "AlbumArtist,Album",
+        "SortBy": "Album,SortName",
+        "SortOrder": "Ascending",
+        "UserId": user_id,
+        "ArtistIds": artist_id
+    }
+    url = urljoin(base_url + '/', f"Users/{user_id}/Items")
+    r = requests.get(url, headers=headers, params=params, verify=False)
+    r.raise_for_status()
+    return r.json()['Items']
+
+def get_genres(base_url, token, user_id):
+    headers = {"X-Emby-Token": token}
+    params = {
+        "IncludeItemTypes": "MusicAlbum,Audio",
+        "Recursive": "true",
+        "SortBy": "SortName",
+        "SortOrder": "Ascending",
+        "UserId": user_id
+    }
+    url = urljoin(base_url + '/', "MusicGenres")
+    r = requests.get(url, headers=headers, params=params, verify=False)
+    r.raise_for_status()
+    return r.json()['Items']
+
+def search_music_items(base_url, token, user_id, artist_id=None, genre_id=None):
+    headers = {"X-Emby-Token": token}
+    params = {
+        "IncludeItemTypes": "Audio",
+        "Recursive": "true",
+        "Fields": "AlbumArtist,Album,Artist,Artists,Genres",
+        "SortBy": "Album,SortName",
+        "SortOrder": "Ascending",
+        "UserId": user_id
+    }
+    
+    if artist_id:
+        params["ArtistIds"] = artist_id
+    if genre_id:
+        params["GenreIds"] = genre_id
+        
     url = urljoin(base_url + '/', f"Users/{user_id}/Items")
     r = requests.get(url, headers=headers, params=params, verify=False)
     r.raise_for_status()
@@ -211,16 +294,159 @@ def fzf_select(entries, preview_cmd=None, multi=False, prompt=None):
     except KeyboardInterrupt:
         sys.exit(0)
 
+def search_by_song(base_url, token, user_id):
+    print(color("Fetching all songs...", Color.FG_CYAN))
+    songs = get_all_songs(base_url, token, user_id)
+    if not songs:
+        print(color("No songs found.", Color.WARNING))
+        return None
+
+    song_choices = []
+    for s in songs:
+        # Handle artist name more safely
+        artist_name = 'Unknown Artist'
+        if s.get('Artists') and isinstance(s.get('Artists'), list) and s['Artists']:
+            artist_name = s['Artists'][0]
+        elif s.get('AlbumArtist') and isinstance(s.get('AlbumArtist'), list) and s['AlbumArtist']:
+            artist_name = s['AlbumArtist'][0]
+        elif s.get('Artist'):
+            artist_name = s['Artist']
+
+        song_choices.append(
+            color(s.get('Name', 'Unknown Title'), Color.FG_GREEN + Color.BOLD) +
+            color(" - ", Color.FG_WHITE) +
+            color(artist_name, Color.FG_YELLOW + Color.BOLD) +
+            color(" [" + s.get('Album', 'Unknown Album') + "]", Color.FG_BLUE)
+        )
+    
+    sel = fzf_select(song_choices, multi=True, prompt=color("Search Songs > ", Color.FG_CYAN + Color.BOLD))
+    if not sel:
+        return None
+
+    selected_songs = []
+    for selected in sel:
+        for song in songs:
+            # Handle artist name safely again for comparison
+            artist_name = 'Unknown Artist'
+            if song.get('Artists') and isinstance(song.get('Artists'), list) and song['Artists']:
+                artist_name = song['Artists'][0]
+            elif song.get('AlbumArtist') and isinstance(song.get('AlbumArtist'), list) and song['AlbumArtist']:
+                artist_name = song['AlbumArtist'][0]
+            elif song.get('Artist'):
+                artist_name = song['Artist']
+
+            song_display = (
+                color(song.get('Name', 'Unknown Title'), Color.FG_GREEN + Color.BOLD) +
+                color(" - ", Color.FG_WHITE) +
+                color(artist_name, Color.FG_YELLOW + Color.BOLD) +
+                color(" [" + song.get('Album', 'Unknown Album') + "]", Color.FG_BLUE)
+            )
+            if strip_ansi(selected) == strip_ansi(song_display):
+                selected_songs.append(song)
+
+    return selected_songs
+
+def search_by_artist(base_url, token, user_id):
+    print(color("Fetching artists...", Color.FG_CYAN))
+    artists = get_artists(base_url, token, user_id)
+    if not artists:
+        print(color("No artists found.", Color.WARNING))
+        return None, None
+
+    artist_choices = [
+        color(a.get('Name', 'Unknown Artist'), Color.FG_YELLOW + Color.BOLD)
+        for a in artists
+    ]
+    sel = fzf_select(artist_choices, prompt=color("Select Artist > ", Color.FG_CYAN + Color.BOLD))
+    if not sel:
+        return None, None
+        
+    selected_artist = None
+    for i, a in enumerate(artists):
+        if strip_ansi(artist_choices[i]) == strip_ansi(sel[0]):
+            selected_artist = a
+            break
+    
+    if not selected_artist:
+        return None, None
+
+    # Get albums for the selected artist
+    print(color(f"Fetching albums for {selected_artist.get('Name')}...", Color.FG_CYAN))
+    albums = get_artist_albums(base_url, token, user_id, selected_artist['Id'])
+    
+    if not albums:
+        print(color("No albums found for this artist.", Color.WARNING))
+        return selected_artist['Id'], None
+
+    album_choices = [
+        color("All Songs", Color.FG_MAGENTA + Color.BOLD)  # Option to view all songs
+    ] + [
+        color(a.get('Name', 'Unknown Album'), Color.FG_GREEN + Color.BOLD) +
+        color(" [" + str(a.get('ProductionYear', '')) + "]", Color.FG_BLUE)
+        for a in albums
+    ]
+    
+    sel = fzf_select(album_choices, prompt=color("Select Album > ", Color.FG_CYAN + Color.BOLD))
+    if not sel:
+        return None, None
+
+    if strip_ansi(sel[0]) == "All Songs":
+        return selected_artist['Id'], None
+
+    # Find selected album
+    for album in albums:
+        album_display = color(album.get('Name', 'Unknown Album'), Color.FG_GREEN + Color.BOLD) + \
+                       color(" [" + str(album.get('ProductionYear', '')) + "]", Color.FG_BLUE)
+        if strip_ansi(album_display) == strip_ansi(sel[0]):
+            return selected_artist['Id'], album['Id']
+    
+    return None, None
+
+def search_by_genre(base_url, token, user_id):
+    print(color("Fetching genres...", Color.FG_CYAN))
+    genres = get_genres(base_url, token, user_id)
+    if not genres:
+        print(color("No genres found.", Color.WARNING))
+        return None
+
+    genre_choices = [
+        color(g.get('Name', 'Unknown Genre'), Color.FG_GREEN + Color.BOLD)
+        for g in genres
+    ]
+    sel = fzf_select(genre_choices, prompt=color("Select Genre > ", Color.FG_CYAN + Color.BOLD))
+    if not sel:
+        return None
+        
+    for i, g in enumerate(genres):
+        if strip_ansi(genre_choices[i]) == strip_ansi(sel[0]):
+            return g['Id']
+    return None
+
 def playback_menu_fzf():
     options = [
         color("Pause", Color.FG_YELLOW),
         color("Resume", Color.FG_GREEN),
         color("Next", Color.FG_CYAN),
-        color("Back to album", Color.FG_MAGENTA),
-        color("Main menu", Color.FG_BLUE),
+        color("Back to Album", Color.FG_MAGENTA),
+        color("Main Menu", Color.FG_BLUE),
         color("Quit", Color.FG_RED + Color.BOLD),
     ]
     selected = fzf_select(options, prompt=color("Playback Command > ", Color.FG_CYAN + Color.BOLD))
+    if not selected:
+        return None
+    clean = strip_ansi(selected[0]).lower()
+    return clean
+
+def main_menu_fzf():
+    options = [
+        color("Browse Albums", Color.FG_CYAN + Color.BOLD),
+        color("Search by Artist", Color.FG_YELLOW + Color.BOLD),
+        color("Search by Genre", Color.FG_GREEN + Color.BOLD),
+        color("Search by Song", Color.FG_MAGENTA + Color.BOLD),
+        color("Change Server", Color.FG_BLUE + Color.BOLD),
+        color("Quit", Color.FG_RED + Color.BOLD),
+    ]
+    selected = fzf_select(options, prompt=color("Main Menu > ", Color.FG_MAGENTA + Color.BOLD))
     if not selected:
         return None
     clean = strip_ansi(selected[0]).lower()
@@ -321,6 +547,7 @@ def main():
             add_server_interactive(servers)
             servers = load_servers()
             continue
+            
         server_choice = choose_server_fzf(servers)
         if server_choice is None:
             print(color("No server chosen, exiting.", Color.FAIL))
@@ -328,7 +555,7 @@ def main():
         if server_choice == 'add':
             server_choice = add_server_interactive(servers)
             servers = load_servers()
-            # If it was not saved, it's a temp server
+        
         server = servers[server_choice]
         base_url = server["url"]
         username = server["username"]
@@ -339,42 +566,73 @@ def main():
             token, user_id = jellyfin_auth(base_url, username, password)
         except Exception as e:
             print(color(f"Login failed: {e}", Color.FAIL))
-            # Remove temp if not saved
             if server_choice == "__TEMP__":
                 servers.pop("__TEMP__", None)
             continue
 
-        while True:  # Album selection/main menu loop
-            print(color("Fetching albums...", Color.FG_CYAN))
-            albums = get_albums(base_url, token, user_id)
-            if not albums:
-                print(color("No albums found.", Color.WARNING))
+        while True:  # Main menu loop
+            menu_choice = main_menu_fzf()
+            if menu_choice is None or menu_choice.startswith('quit'):
+                if server_choice == "__TEMP__":
+                    servers.pop("__TEMP__", None)
+                restore_terminal()
+                print(color("Goodbye!", Color.FG_MAGENTA + Color.BOLD))
+                return
+            elif menu_choice.startswith('change'):
                 break
 
-            album_choices = [
-                color(a.get('AlbumArtist', ['Unknown Artist'])[0] if isinstance(a.get('AlbumArtist', []), list)
-                      else a.get('AlbumArtist', 'Unknown Artist'), Color.FG_YELLOW + Color.BOLD) +
-                color(" - ", Color.FG_WHITE) +
-                color(a.get('Name', 'Unknown Album'), Color.FG_GREEN + Color.BOLD)
-                for a in albums
-            ]
-            sel = fzf_select(album_choices, prompt=color("Select Album > ", Color.FG_CYAN + Color.BOLD))
-            if not sel:
-                print(color("No album selected.", Color.WARNING))
-                break
-            album_id = None
-            for i, a in enumerate(albums):
-                if strip_ansi(album_choices[i]) == strip_ansi(sel[0]):
-                    album_id = a['Id']
-                    break
+            songs = None
+            if menu_choice.startswith('search by artist'):
+                artist_id, album_id = search_by_artist(base_url, token, user_id)
+                if artist_id:
+                    if album_id:
+                        songs = get_music_items(base_url, token, user_id, album_id=album_id)
+                    else:
+                        songs = search_music_items(base_url, token, user_id, artist_id=artist_id)
+            elif menu_choice.startswith('search by genre'):
+                genre_id = search_by_genre(base_url, token, user_id)
+                if genre_id:
+                    songs = search_music_items(base_url, token, user_id, genre_id=genre_id)
+            elif menu_choice.startswith('search by song'):
+                songs = search_by_song(base_url, token, user_id)
+            elif menu_choice.startswith('browse'):
+                print(color("Fetching albums...", Color.FG_CYAN))
+                albums = get_albums(base_url, token, user_id)
+                if not albums:
+                    print(color("No albums found.", Color.WARNING))
+                    continue
 
-            while True:  # Track selection loop
-                print(color("Fetching tracks...", Color.FG_CYAN))
-                songs = get_music_items(base_url, token, user_id, album_id=album_id)
+                album_choices = [
+                    color(a.get('AlbumArtist', ['Unknown Artist'])[0] if isinstance(a.get('AlbumArtist', []), list)
+                          else a.get('AlbumArtist', 'Unknown Artist'), Color.FG_YELLOW + Color.BOLD) +
+                    color(" - ", Color.FG_WHITE) +
+                    color(a.get('Name', 'Unknown Album'), Color.FG_GREEN + Color.BOLD)
+                    for a in albums
+                ]
+                sel = fzf_select(album_choices, prompt=color("Select Album > ", Color.FG_CYAN + Color.BOLD))
+                if not sel:
+                    print(color("No album selected.", Color.WARNING))
+                    continue
+                    
+                album_id = None
+                for i, a in enumerate(albums):
+                    if strip_ansi(album_choices[i]) == strip_ansi(sel[0]):
+                        album_id = a['Id']
+                        break
+                        
+                if album_id:
+                    songs = get_music_items(base_url, token, user_id, album_id=album_id)
+
+            if songs:
+                last_menu_choice = menu_choice
+                last_artist_id = artist_id if 'artist_id' in locals() else None
+                last_album_id = album_id if 'album_id' in locals() else None
+                last_genre_id = genre_id if 'genre_id' in locals() else None
+
                 if not songs:
-                    print(color("No songs found in the album.", Color.WARNING))
-                    break
-
+                    print(color("No songs found.", Color.WARNING))
+                    continue
+                    
                 song_choices = [
                     color(f"{s.get('IndexNumber', '?'):02d}.", Color.FG_MAGENTA + Color.BOLD) +
                     color(" ", Color.FG_WHITE) +
@@ -383,74 +641,88 @@ def main():
                     color(s.get('Artists', [s.get('AlbumArtist', ['Unknown Artist'])[0]])[0] 
                           if isinstance(s.get('Artists', []), list) or isinstance(s.get('AlbumArtist', []), list)
                           else (s.get('Artist') or s.get('AlbumArtist', 'Unknown Artist')),
-                          Color.FG_YELLOW + Color.BOLD)
+                          Color.FG_YELLOW + Color.BOLD) +
+                    color(" [" + s.get('Album', 'Unknown Album') + "]", Color.FG_BLUE)
                     for s in songs
                 ]
-                sel = fzf_select(song_choices, multi=True, prompt=color("Select Tracks > ", Color.FG_CYAN + Color.BOLD))
-                if not sel:
-                    print(color("No song selected.", Color.WARNING))
-                    break
+                
+                while True:  # Song selection loop
+                    sel = fzf_select(song_choices, multi=True, prompt=color("Select Tracks > ", Color.FG_CYAN + Color.BOLD))
+                    if not sel:
+                        break  # Break to main menu if no selection
 
-                song_map = {
-                    (s.get('IndexNumber', '?'),
-                     s.get('Name', 'Unknown Title'),
-                     s.get('Artists', [s.get('AlbumArtist', ['Unknown Artist'])[0]])[0]
-                     if isinstance(s.get('Artists', []), list) or isinstance(s.get('AlbumArtist', []), list)
-                     else (s.get('Artist') or s.get('AlbumArtist', 'Unknown Artist'))
-                    ): s for s in songs
-                }
+                    song_map = {
+                        (s.get('IndexNumber', '?'),
+                         s.get('Name', 'Unknown Title'),
+                         s.get('Artists', [s.get('AlbumArtist', ['Unknown Artist'])[0]])[0]
+                         if isinstance(s.get('Artists', []), list) or isinstance(s.get('AlbumArtist', []), list)
+                         else (s.get('Artist') or s.get('AlbumArtist', 'Unknown Artist'))
+                        ): s for s in songs
+                    }
 
-                selected_tuples = []
-                for s in sel:
-                    clean = strip_ansi(s)
-                    try:
-                        idx_and_rest = clean.split(". ", 1)
-                        index_number = int(idx_and_rest[0])
-                        name_and_artist = idx_and_rest[1].rsplit(" - ", 1)
-                        name = name_and_artist[0]
-                        artist = name_and_artist[1]
-                        selected_tuples.append((index_number, name, artist))
-                    except Exception:
-                        continue
+                    selected_tuples = []
+                    for s in sel:
+                        clean = strip_ansi(s)
+                        try:
+                            idx_and_rest = clean.split(". ", 1)
+                            index_number = int(idx_and_rest[0])
+                            rest = idx_and_rest[1]
+                            name_and_rest = rest.split(" - ", 1)
+                            name = name_and_rest[0]
+                            artist_and_album = name_and_rest[1].split(" [", 1)
+                            artist = artist_and_album[0]
+                            selected_tuples.append((index_number, name, artist))
+                        except Exception:
+                            continue
 
-                current_index = 0
-                while current_index < len(selected_tuples):
-                    sel_tuple = selected_tuples[current_index]
-                    song_obj = song_map.get(sel_tuple)
-                    song_title = song_obj.get('Name', 'Unknown Title') if song_obj else 'Unknown Title'
-                    song_artist = (
-                        song_obj.get('Artists', [song_obj.get('AlbumArtist', ['Unknown Artist'])[0]])[0]
-                        if isinstance(song_obj.get('Artists', []), list) or isinstance(song_obj.get('AlbumArtist', []), list)
-                        else (song_obj.get('Artist') or song_obj.get('AlbumArtist', 'Unknown Artist'))
-                    ) if song_obj else 'Unknown Artist'
-                    sid = song_obj.get('Id') if song_obj else None
-                    url = get_stream_url(base_url, token, user_id, sid)
-                    result = play_with_ffmpeg_interactive(url, song_title, song_artist)
-                    if result == 'quit':
-                        restore_terminal()
-                        # Remove temp server after quitting
-                        if server_choice == "__TEMP__":
-                            servers.pop("__TEMP__", None)
-                        return
-                    if result == 'next':
-                        current_index += 1
-                    elif result == 'back_album':
-                        break
-                    elif result == 'main_menu':
-                        break
-                    elif result == 'finished':
-                        current_index += 1
-                    elif result == 'error':
-                        current_index += 1
-
-                if result == 'back_album':
-                    continue  # back to album selection
-                elif result == 'main_menu':
-                    break  # back to album selection
-
-        # After finishing with a temp server, remove it
-        if server_choice == "__TEMP__":
-            servers.pop("__TEMP__", None)
+                    current_index = 0
+                    while current_index < len(selected_tuples):
+                        sel_tuple = selected_tuples[current_index]
+                        song_obj = song_map.get(sel_tuple)
+                        if not song_obj:
+                            current_index += 1
+                            continue
+                            
+                        song_title = song_obj.get('Name', 'Unknown Title')
+                        song_artist = (
+                            song_obj.get('Artists', [song_obj.get('AlbumArtist', ['Unknown Artist'])[0]])[0]
+                            if isinstance(song_obj.get('Artists', []), list) or isinstance(song_obj.get('AlbumArtist', []), list)
+                            else (song_obj.get('Artist') or song_obj.get('AlbumArtist', 'Unknown Artist'))
+                        )
+                        
+                        url = get_stream_url(base_url, token, user_id, song_obj['Id'])
+                        result = play_with_ffmpeg_interactive(url, song_title, song_artist)
+                        
+                        if result == 'quit':
+                            if server_choice == "__TEMP__":
+                                servers.pop("__TEMP__", None)
+                            restore_terminal()
+                            return
+                        elif result == 'next':
+                            current_index += 1
+                        elif result == 'back_album':
+                            songs = None  # Clear current songs
+                            # Re-fetch songs based on last context
+                            if last_menu_choice.startswith('search by artist'):
+                                if last_album_id:
+                                    songs = get_music_items(base_url, token, user_id, album_id=last_album_id)
+                                elif last_artist_id:
+                                    songs = search_music_items(base_url, token, user_id, artist_id=last_artist_id)
+                            elif last_menu_choice.startswith('search by genre') and last_genre_id:
+                                songs = search_music_items(base_url, token, user_id, genre_id=last_genre_id)
+                            elif last_menu_choice.startswith('search by song'):
+                                songs = None  # Return to song search
+                            break  # Break to song selection
+                        elif result == 'main_menu':
+                            songs = None
+                            break  # Break to song selection, which will then break to main menu
+                        elif result == 'finished':
+                            current_index += 1
+                        elif result == 'error':
+                            current_index += 1
+                    
+                    if not songs:
+                        break  # Break to main menu if songs were cleared
 
 if __name__ == "__main__":
     main()
