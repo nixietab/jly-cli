@@ -24,4 +24,12 @@ A terminal-based Jellyfin music browser and player using `fzf` inspired by ani-c
 ## Usage
 
 ```bash
-./jly-fin
+./jly-cli
+```
+
+## Instalation
+
+```bash
+sudo curl -L https://raw.githubusercontent.com/nixietab/jly-cli/refs/heads/main/jly-cli -o /usr/bin/jly-cli 
+sudo chmod +x /usr/bin/jly-cli
+```
