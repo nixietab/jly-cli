@@ -481,59 +481,74 @@ def play_with_ffmpeg_interactive(url, song_title, song_artist):
         ffplay = subprocess.Popen(ffplay_cmd, stdin=ffmpeg.stdout, preexec_fn=os.setsid)
         ffmpeg.stdout.close()
 
-        while True:
-            if ffplay.poll() is not None:
-                break
-            cmd = playback_menu_fzf()
-            if cmd is None:
-                continue
-            if cmd.startswith('pause'):
-                os.killpg(os.getpgid(ffplay.pid), signal.SIGSTOP)
-                print(color("Paused.", Color.WARNING))
-            elif cmd.startswith('resume'):
-                os.killpg(os.getpgid(ffplay.pid), signal.SIGCONT)
-                print(color("Resumed.", Color.OKGREEN))
-            elif cmd.startswith('next'):
-                os.killpg(os.getpgid(ffplay.pid), signal.SIGTERM)
-                ffplay.wait()
-                ffmpeg.terminate()
-                return 'next'
-            elif cmd.startswith('back'):
-                os.killpg(os.getpgid(ffplay.pid), signal.SIGTERM)
-                ffplay.wait()
-                ffmpeg.terminate()
-                return 'back_album'
-            elif cmd.startswith('main'):
-                os.killpg(os.getpgid(ffplay.pid), signal.SIGTERM)
-                ffplay.wait()
-                ffmpeg.terminate()
-                return 'main_menu'
-            elif cmd.startswith('quit'):
-                try:
+        try:
+            while True:
+                if ffplay.poll() is not None:
+                    break
+                cmd = playback_menu_fzf()
+                if cmd is None:
+                    continue
+                if cmd.startswith('pause'):
+                    os.killpg(os.getpgid(ffplay.pid), signal.SIGSTOP)
+                    print(color("Paused.", Color.WARNING))
+                elif cmd.startswith('resume'):
+                    os.killpg(os.getpgid(ffplay.pid), signal.SIGCONT)
+                    print(color("Resumed.", Color.OKGREEN))
+                elif cmd.startswith('next'):
                     os.killpg(os.getpgid(ffplay.pid), signal.SIGTERM)
-                except Exception:
-                    pass
-                try:
-                    ffplay.wait(timeout=2)
-                except Exception:
-                    pass
-                try:
+                    ffplay.wait()
                     ffmpeg.terminate()
-                    ffmpeg.wait(timeout=2)
-                except Exception:
-                    pass
-                print(color("Goodbye!", Color.FG_MAGENTA + Color.BOLD))
-                restore_terminal()
-                return 'quit'
-            else:
-                print(color("Unknown option.", Color.WARNING))
+                    return 'next'
+                elif cmd.startswith('back'):
+                    os.killpg(os.getpgid(ffplay.pid), signal.SIGTERM)
+                    ffplay.wait()
+                    ffmpeg.terminate()
+                    return 'back_album'
+                elif cmd.startswith('main'):
+                    os.killpg(os.getpgid(ffplay.pid), signal.SIGTERM)
+                    ffplay.wait()
+                    ffmpeg.terminate()
+                    return 'main_menu'
+                elif cmd.startswith('quit'):
+                    try:
+                        os.killpg(os.getpgid(ffplay.pid), signal.SIGTERM)
+                    except Exception:
+                        pass
+                    try:
+                        ffplay.wait(timeout=2)
+                    except Exception:
+                        pass
+                    try:
+                        ffmpeg.terminate()
+                        ffmpeg.wait(timeout=2)
+                    except Exception:
+                        pass
+                    print(color("Goodbye!", Color.FG_MAGENTA + Color.BOLD))
+                    restore_terminal()
+                    return 'quit'
+                else:
+                    print(color("Unknown option.", Color.WARNING))
+        finally:
+            # Ensure ffmpeg is terminated if something breaks in the inner loop
+            ffmpeg.terminate()
+            ffplay.terminate()
 
-        ffmpeg.terminate()
         return 'finished'
-    except Exception as e:
-        print(color(f"Error playing stream: {e}", Color.FAIL))
-        return 'error'
 
+    except Exception as e:
+        # Try to print ffmpeg's stderr if available
+        ffmpeg_stderr = ""
+        try:
+            if 'ffmpeg' in locals() and ffmpeg.stderr:
+                ffmpeg_stderr = ffmpeg.stderr.read().decode(errors="replace")
+        except Exception:
+            pass
+        error_message = f"Error playing stream: {e}"
+        if ffmpeg_stderr:
+            error_message += f"\nffmpeg error output:\n{ffmpeg_stderr}"
+        print(color(error_message, Color.FAIL))
+        return 'error'
+        
 def main():
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
