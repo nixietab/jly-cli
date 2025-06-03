@@ -1,4 +1,4 @@
-# jly-fin
+# jly-cli
 
 A terminal-based Jellyfin music browser and player using `fzf` inspired by ani-cli.
 
